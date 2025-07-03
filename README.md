@@ -1,6 +1,10 @@
 # 3D Wireframe Prediction Training
 
-This repository provides an end-to-end pipeline for training a 3D wireframe prediction model using PyTorch. The code defines utility functions for edge sampling and similarity, computes a composite loss with Hungarian matching, handles point cloud and wireframe data, implements a dummy model for testing, and runs a training loop with logging and checkpointing.
+This repository provides an end-to-end pipeline for training a 3D wireframe prediction model using PyTorch. It implements two recent transformer-based building-wireframe reconstruction methods—PBWR and BWFormer—to sample and match edges in aerial LiDAR point clouds.
+
+- **PBWR**: Parametric-Building-Wireframe Reconstruction from Aerial LiDAR Point Clouds :contentReference[oaicite:0]{index=0}  
+- **BWFormer**: Building Wireframe Reconstruction from Airborne LiDAR Point Cloud with Transformer :contentReference[oaicite:1]{index=1}
+
 
 ## Features
 
