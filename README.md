@@ -1,42 +1,51 @@
-# 3D Wireframe Prediction Training
+# 3D Wireframe Prediction
 
-This repository provides an end-to-end pipeline for training a 3D wireframe prediction model using PyTorch. It implements two recent transformer-based building-wireframe reconstruction methods—PBWR and BWFormer—to sample and match edges in aerial LiDAR point clouds.
+This repository provides a modular PyTorch pipeline for training a 3D wireframe prediction model from point cloud data. It supports transformer-based and dummy models to reconstruct building wireframes from aerial LiDAR scans.
 
-- **PBWR**: Parametric-Building-Wireframe Reconstruction from Aerial LiDAR Point Clouds :contentReference[oaicite:0]{index=0}  
-- **BWFormer**: Building Wireframe Reconstruction from Airborne LiDAR Point Cloud with Transformer :contentReference[oaicite:1]{index=1}
+The implementation is inspired by two recent papers:
+- **PBWR** – Parametric-Building-Wireframe Reconstruction from Aerial LiDAR Point Clouds  
+- **BWFormer** – Building Wireframe Reconstruction from Airborne LiDAR Point Cloud with Transformer
 
+---
 
-## Features
+## 📌 Features
 
-* **Edge Sampling & Similarity**: Uniform sampling along edges and computation of a weighted combination of Hausdorff distance, directional cosine similarity, and relative length difference.
-* **Wireframe Loss**: Composite loss incorporating midpoint and component errors, confidence, quadrant classification, and edge similarity, matched with the Hungarian algorithm.
-* **Dataset Handling**: Load point clouds from `.xyz` files and wireframes from Wavefront `.obj` files, packaged into a PyTorch `Dataset` and `DataLoader`.
-* **Dummy Model**: A simple linear model (`DummyWireframeNet`) to test the training pipeline.
-* **Training Loop**: Multi-epoch training with average loss reporting, time and (optional) CUDA memory profiling, and history saved to `denemeler.json`.
+- **Edge Sampling & Similarity**  
+  Compute a composite similarity score using Hausdorff distance, directional cosine, and length ratios.
+  
+- **Hungarian Matching Loss**  
+  Matches predicted and ground-truth edges optimally, and computes loss using multiple weighted terms (midpoint, components, confidence, quadrant, similarity).
 
-## Requirements
+- **Modular Architecture**  
+  Includes both a simple baseline model (`DummyWireframeNet`) and a transformer-based encoder-decoder (`TransformerWireframeNet`).
 
-* Python 3.7+
-* PyTorch
-* NumPy
-* SciPy
+- **Point Cloud Dataset Loader**  
+  Loads `.xyz` and `.obj` files into PyTorch `Dataset` format.
 
-Install dependencies via:
+- **Training Loop**  
+  Logs average loss, time, and optional CUDA memory for each epoch; results are saved to `denemeler.json`.
 
-```bash
-pip install torch numpy scipy
-```
+---
 
-## Repository Structure
+## 📁 Project Structure
 
 ```plaintext
-.
-├── README.md             # Project overview and instructions
-├── denemeler.json        # Training history (created during training)
-├── 1.xyz                 # Example point cloud data (replace with your own)
-├── 1.obj                 # Example wireframe data (replace with your own)
-└── wireframe_train.py    # Main Python script containing all code sections
-```
+3D-Wireframe-Prediction/
+├── src/
+│   ├── models/
+│   │   ├── dummy_net.py              # Simple linear model
+│   │   ├── transformer_net.py        # Transformer-based model
+│   │   └── __init__.py               # For model imports
+│   ├── losses/
+│   │   └── wireframe_loss.py         # Loss function with matching
+│   ├── dataset.py                    # Dataset class and data loading utils
+│   ├── train.py                      # Main training script
+├── data/
+│   ├── 1.xyz                         # Sample point cloud
+│   └── 1.obj                         # Sample wireframe edges
+├── denemeler.json                    # Training history (generated during training)
+├── README.md                         # You are here!
+
 
 ## Usage
 
