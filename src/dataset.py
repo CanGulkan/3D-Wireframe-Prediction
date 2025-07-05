@@ -49,7 +49,6 @@ def normalize_wireframe(vertices: np.ndarray, lines=None):
 
     return norm_vertices, lines
 
-
 def load_xyz(path: str) -> np.ndarray:
     """
     Load XYZ point cloud (first 3 columns).

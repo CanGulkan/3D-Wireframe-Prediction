@@ -12,15 +12,7 @@ from models.dummy_net import DummyWireframeNet
 from losses.wireframe_loss import wireframe_loss    
 from dataset import load_wireframe_obj , load_xyz        
 
-
-
-
-
-
-
 # ─── Part 3: Dataset Handling ───────────────────────────────────────────────
-
-
 
 class WireframeDataset(Dataset):
     """
@@ -41,7 +33,6 @@ class WireframeDataset(Dataset):
             for i, j in eidx
         ], dim=0)
         return pc, gt_edges
-
 
 # ─── Part 5: Training Loop ──────────────────────────────────────────────────
 
