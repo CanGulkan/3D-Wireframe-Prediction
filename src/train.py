@@ -12,7 +12,7 @@ from models.dummy_net import DummyWireframeNet
 from losses.wireframe_loss import wireframe_loss    
 from dataset import load_wireframe_obj , load_xyz        
 from visualize import visualize_wireframe_open3d 
-from test import rms_distance_to_wireframe
+from test import rms_distance_exact
 
 # ─── Part 3: Dataset Handling ───────────────────────────────────────────────
 
@@ -121,8 +121,8 @@ def main():
     pred_np = pred_edges.detach().cpu().numpy()   # shape [E_pred, 2, 3]
     gt_np   = gt_edges.detach().cpu().numpy()     # shape [E_gt,   2, 3]
 
-    rms = rms_distance_to_wireframe(pred_np, gt_np, samples_per_edge=20)
-    print(f"RMS distance (sampling): {rms:.8f}")
+    rms = rms_distance_exact(pred_np, gt_np)
+    print(f"RMS distance (exact): {rms:.8f}")
 
     #visualize_wireframe_open3d(pred_edges)
 
