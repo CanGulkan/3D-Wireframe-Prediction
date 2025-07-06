@@ -11,6 +11,8 @@ from models import TransformerWireframeNet
 from models.dummy_net import DummyWireframeNet
 from losses.wireframe_loss import wireframe_loss    
 from dataset import load_wireframe_obj , load_xyz        
+from visualize import visualize_wireframe_open3d 
+from test import rms_distance_to_wireframe
 
 # ─── Part 3: Dataset Handling ───────────────────────────────────────────────
 
@@ -68,7 +70,7 @@ def main():
 
     a = True
     first_epoch = -1
-    epoch_max_range = 6
+    epoch_max_range = 4
 
     for epoch in range(1, epoch_max_range):
         if device.type == "cuda": torch.cuda.synchronize()
@@ -114,6 +116,15 @@ def main():
     print(f"Differenceses between first and last is {diff:.8f} ")
     b = diff / (epoch_max_range - 1)
     print(f"Productivity increase average per epoch {b:.8f} ")
+
+
+    pred_np = pred_edges.detach().cpu().numpy()   # shape [E_pred, 2, 3]
+    gt_np   = gt_edges.detach().cpu().numpy()     # shape [E_gt,   2, 3]
+
+    rms = rms_distance_to_wireframe(pred_np, gt_np, samples_per_edge=20)
+    print(f"RMS distance (sampling): {rms:.8f}")
+
+    #visualize_wireframe_open3d(pred_edges)
 
     # Save training history to JSON
     with open(history_path, "w") as f:
