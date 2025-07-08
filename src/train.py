@@ -3,8 +3,7 @@ import os
 import json
 import time
 import torch
-import numpy as np       
-import torch.nn as nn                                
+import numpy as np                                     
 from torch.utils.data import Dataset, DataLoader  
 from scipy.optimize import linear_sum_assignment  # Hungarian algorithm for optimal matching           
 from models import TransformerWireframeNet
@@ -14,6 +13,8 @@ from dataset import load_wireframe_obj , load_xyz
 from visualize import visualize_wireframe_open3d 
 from test import rms_distance_exact
 from test import graph_edit_distance
+from models.bwformer import BWFormer 
+
 
 def extract_vertices_and_edges(edge_tensor):
     """
@@ -79,12 +80,14 @@ def main():
     _, first_gt = ds[0]
     E_pred = first_gt.shape[0]
 
-    model = DummyWireframeNet(E_pred).to(device)
+    # model = DummyWireframeNet(E_pred).to(device)
+    model = BWFormer(E_pred=E_pred).to(device)
+
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
 
     a = True
     first_epoch = -1
-    epoch_max_range = 4
+    epoch_max_range = 10
 
     for epoch in range(1, epoch_max_range):
         if device.type == "cuda": torch.cuda.synchronize()
@@ -92,10 +95,12 @@ def main():
 
         total_loss = 0.0
         for pc_batch, gt_batch in loader:
-            pc = pc_batch[0].to(device)
+            pc = pc_batch.to(device)
             gt_edges = gt_batch[0].to(device)
 
             pred_edges, p_conf, p_quad = model(pc)
+
+            p_conf = p_conf.squeeze(0)
             loss = wireframe_loss(pred_edges, gt_edges, p_conf, p_quad)
 
             optimizer.zero_grad()
@@ -141,12 +146,12 @@ def main():
 
     rms = rms_distance_exact(pred_np, gt_np)
     print(f"RMS distance (exact): {rms:.8f}")
-    
+
     wde = graph_edit_distance(pd_vertices, pd_edges, gt_vertices, gt_edges, wed_v=0) # For simplicity, using RMS as GED
     print(f"Graph_edit_distance : {wde:.8f}")
 
 
-    # visualize_wireframe_open3d(pred_edges)
+    visualize_wireframe_open3d(pred_edges)
 
     # Save training history to JSON
     with open(history_path, "w") as f:
