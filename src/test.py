@@ -3,6 +3,7 @@ import random
 import numpy as np
 from scipy.spatial import cKDTree
 from dataset import normalize_wireframe
+from scipy.spatial.distance import cdist
 
 # ─── Deterministic Setup ──────────────────────────────────────────────────────
 import torch
@@ -98,6 +99,53 @@ def rms_distance_exact(pred_edges: np.ndarray, gt_edges: np.ndarray) -> float:
 
     # 7) RMS = sqrt(mean(d²))
     return float(np.sqrt(np.mean(min_d2)))
+
+
+
+
+def graph_edit_distance(pd_vertices, pd_edges, gt_vertices, gt_edges, wed_v):
+    '''
+    :param wed_v: positive corners edit distance
+    :return:
+    '''
+    wed_e = 0
+    if len(pd_vertices) > 0:
+        distances = cdist(pd_vertices, gt_vertices)
+        wed_v += sum(np.min(distances, axis=1))
+        min_indices = np.argmin(distances, axis=1)
+        for i, index in enumerate(min_indices):
+            pd_vertices[i] = gt_vertices[index]
+        unique_pd_vertices = np.unique(pd_vertices, axis=0)
+        renew_pd_edges = pd_edges.copy()
+        for i, point in enumerate(unique_pd_vertices):
+            v_indexs = np.where((pd_vertices == point).all(axis=1))[0]
+            for v_index in v_indexs:
+                renew_pd_edges[pd_edges == v_index] = i
+        renew_pd_edges = np.unique(renew_pd_edges, axis=0)
+
+        gt_edges_copy = gt_edges.copy()
+        for edge in renew_pd_edges:
+            e1_index = np.where((gt_vertices == unique_pd_vertices[edge[0]]).all(axis=1))[0]
+            e2_index = np.where((gt_vertices == unique_pd_vertices[edge[1]]).all(axis=1))[0]
+            a = np.where((gt_edges == np.array(sorted([e1_index[0], e2_index[0]]))).all(axis=1))[0]
+            if len(a):
+                mask = np.any(gt_edges_copy != np.array(sorted([e1_index[0], e2_index[0]])), axis=1)
+                gt_edges_copy = gt_edges_copy[mask]
+            else:
+                wed_e += np.linalg.norm(unique_pd_vertices[edge[0]] - unique_pd_vertices[edge[1]])
+    else:
+        gt_edges_copy = gt_edges.copy()
+        wed_v = 0
+
+    for edge in gt_edges_copy:
+        wed_e += np.linalg.norm(gt_vertices[edge[0]] - gt_vertices[edge[1]])
+
+    sum_distance = 0
+    for edge in gt_edges:
+        sum_distance += np.linalg.norm(gt_vertices[edge[0]] - gt_vertices[edge[1]])
+
+    wde = (wed_e + wed_v) / sum_distance
+    return wde
 
 # ─── Main Script ───────────────────────────────────────────────────────────────
 if __name__ == "__main__":

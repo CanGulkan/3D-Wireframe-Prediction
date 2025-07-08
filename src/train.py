@@ -13,6 +13,20 @@ from losses.wireframe_loss import wireframe_loss
 from dataset import load_wireframe_obj , load_xyz        
 from visualize import visualize_wireframe_open3d 
 from test import rms_distance_exact
+from test import graph_edit_distance
+
+def extract_vertices_and_edges(edge_tensor):
+    """
+    From edge tensor [E, 2, 3], extract unique vertices and edge indices.
+    Returns:
+        vertices: np.ndarray [N, 3]
+        edges: np.ndarray [E, 2] (index into vertices)
+    """
+    edge_np = edge_tensor.reshape(-1, 3)  # Flatten to [2E, 3]
+    vertices, inverse_indices = np.unique(edge_np, axis=0, return_inverse=True)
+    edges = inverse_indices.reshape(-1, 2)
+    return vertices, edges
+
 
 # ─── Part 3: Dataset Handling ───────────────────────────────────────────────
 
@@ -121,10 +135,18 @@ def main():
     pred_np = pred_edges.detach().cpu().numpy()   # shape [E_pred, 2, 3]
     gt_np   = gt_edges.detach().cpu().numpy()     # shape [E_gt,   2, 3]
 
+
+    pd_vertices, pd_edges = extract_vertices_and_edges(pred_np)
+    gt_vertices, gt_edges = extract_vertices_and_edges(gt_np)
+
     rms = rms_distance_exact(pred_np, gt_np)
     print(f"RMS distance (exact): {rms:.8f}")
+    
+    wde = graph_edit_distance(pd_vertices, pd_edges, gt_vertices, gt_edges, wed_v=0) # For simplicity, using RMS as GED
+    print(f"Graph_edit_distance : {wde:.8f}")
 
-    #visualize_wireframe_open3d(pred_edges)
+
+    # visualize_wireframe_open3d(pred_edges)
 
     # Save training history to JSON
     with open(history_path, "w") as f:
