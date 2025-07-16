@@ -2,6 +2,7 @@ import os
 import json
 import time
 import torch
+import torch.nn.functional as F
 import numpy as np
 from torch.utils.data import Dataset, DataLoader
 from losses.wireframe_loss import wireframe_loss    # Custom loss for wireframe prediction
@@ -11,14 +12,52 @@ from test import rms_distance_exact, graph_edit_distance  # Evaluation metrics
 from models.bwformer import BWFormer                 # Transformer-based wireframe model
 
 
-from torch.optim.lr_scheduler import StepLR # Learning rate scheduler for adaptive learning rate control
+from torch.optim.lr_scheduler import StepLR, ReduceLROnPlateau
+
+from wireframetransform import WireframeTransform # Data augmentation for wireframe training
+
+
+
+def compute_angle_preservation_loss(edges):
+    """
+    Computes an average angle difference between consecutive edges.
+    Assumes edges is a tensor of shape [E, 2, 3].
+    """
+    if edges.shape[0] < 2:
+        return torch.tensor(0.0, device=edges.device)
+    # Get edge vectors
+    edge_vecs = edges[:, 1] - edges[:, 0]  # [E, 3]
+    # Compute angles between consecutive edge vectors
+    v1 = edge_vecs[:-1]
+    v2 = edge_vecs[1:]
+    dot = (v1 * v2).sum(dim=1)
+    norm1 = v1.norm(dim=1)
+    norm2 = v2.norm(dim=1)
+    cos_angle = dot / (norm1 * norm2 + 1e-8)
+    angle_diff = torch.acos(torch.clamp(cos_angle, -1.0, 1.0))
+    # Penalize large angle changes (encourage smoothness)
+    return angle_diff.mean()
+
+def enhanced_wireframe_loss(pred_edges, gt_edges, p_conf, p_quad):
+    # Original loss
+    base_loss = wireframe_loss(pred_edges, gt_edges, p_conf, p_quad) 
+    
+    # Add edge length regularization
+    pred_lengths = torch.norm(pred_edges[:,0] - pred_edges[:,1], dim=1)
+    gt_lengths = torch.norm(gt_edges[:,0] - gt_edges[:,1], dim=1)
+    length_loss = F.mse_loss(pred_lengths.mean(), gt_lengths.mean())
+    
+    # Add angle preservation term (for consecutive edges)
+    angle_loss = compute_angle_preservation_loss(pred_edges) 
+    
+    return base_loss + 0.1*length_loss + 0.05*angle_loss
 
 
 
 def extract_vertices_and_edges(edge_tensor):
     """
     From a tensor of edges (shape [E, 2, 3]), extract:
-      - unique vertices as an (N, 3) array
+      - unique vertices as an (N, 3) array 
       - edge indices as an (E, 2) array that indexes into vertices
     Returns:
         vertices: np.ndarray of shape [N, 3]
@@ -66,10 +105,12 @@ class WireframeDataset(Dataset):
       - pc: Tensor of shape [N_points, 3]
       - gt_edges: Tensor of shape [E_gt, 2, 3]
     """
-    def __init__(self, xyz_paths, obj_paths):
+    def __init__(self, xyz_paths, obj_paths, transform=None):
         # Store lists of file paths for .xyz point clouds and .obj wireframes
         self.xyz_paths = xyz_paths
         self.obj_paths = obj_paths
+
+        self.transform = transform
 
     def __len__(self):
         # Number of samples in the dataset
@@ -87,6 +128,9 @@ class WireframeDataset(Dataset):
         ], dim=0)
         # 2) normalize both so that GT fits in unit sphere at origin
         pc, gt_edges = normalize_by_gt(pc, gt_edges)
+
+        if self.transform:
+            pc, gt_edges = self.transform(pc, gt_edges)
 
         return pc, gt_edges
 
@@ -113,8 +157,16 @@ def main():
     xyz_paths = ["1.xyz"]
     obj_paths = ["1.obj"]
 
+    transform = WireframeTransform(
+        noise_std=0.01,      # Standard deviation of Gaussian noise
+        max_rotation=15,     # Max rotation in degrees
+        min_scale=0.9,       # Minimum scaling factor
+        max_scale=1.1        # Maximum scaling factor
+    )
+
     # Instantiate dataset and data loader
-    ds = WireframeDataset(xyz_paths, obj_paths)
+    ds = WireframeDataset(xyz_paths, obj_paths, transform=transform)
+
     loader = DataLoader(
         ds,
         batch_size=1,
@@ -134,7 +186,12 @@ def main():
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
 
     # 1) Define the scheduler right after your optimizer:
-    scheduler = StepLR(optimizer, step_size=10, gamma=1.0) # defult 0.5
+    scheduler = ReduceLROnPlateau(
+        optimizer,
+        mode='min',       # Monitor loss
+        factor=0.5,      # Reduce LR by half
+        patience=3      # Wait 3 epochs w/o improvement
+    )
 
     # Variables to track loss improvements
     first_epoch_loss = None
@@ -160,7 +217,7 @@ def main():
             # Squeeze batch dimension from confidences
             p_conf = p_conf.squeeze(0)
             # Compute wireframe loss
-            loss = wireframe_loss(pred_edges, gt_edges, p_conf, p_quad)
+            loss = enhanced_wireframe_loss(pred_edges, gt_edges, p_conf, p_quad)
 
             # Backpropagation
             optimizer.zero_grad()
@@ -168,8 +225,7 @@ def main():
             optimizer.step()
 
             total_loss += loss.item()
-        # 2) Step the scheduler once per epoch:
-        scheduler.step()
+
 
         # 3) (Optional) Log the current LR:
         current_lr = scheduler.get_last_lr()[0]
@@ -179,6 +235,9 @@ def main():
             torch.cuda.synchronize()
         epoch_time = time.time() - start_time
         avg_loss = total_loss / len(loader)
+
+        # 2) Step the scheduler once per epoch:
+        scheduler.step(avg_loss)
 
         # Track peak GPU memory (if applicable)
         if device.type == "cuda":
@@ -214,7 +273,7 @@ def main():
     pred_np = pred_edges.detach().cpu().numpy()   # [E_pred, 2, 3]
     gt_np   = gt_edges.detach().cpu().numpy()     # [E_gt,   2, 3]
 
-    visualize_wireframe_open3d(pred_edges)
+    visualize_wireframe_open3d(pred_edges, gt_edges)
 
     # Extract vertices and edge indices
     pd_vertices, pd_edges = extract_vertices_and_edges(pred_np)
