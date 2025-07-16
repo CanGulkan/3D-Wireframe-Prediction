@@ -54,7 +54,7 @@ def load_xyz(path: str) -> np.ndarray:
     Load XYZ point cloud (first 3 columns).
     """
     data = np.loadtxt(path)
-    return normalize_unit_sphere(data[:, :3])
+    return data[:, :3]
 
 def load_wireframe_obj(path: str):
     """
@@ -74,4 +74,4 @@ def load_wireframe_obj(path: str):
                     edges.append((a, b))
     
 
-    return normalize_wireframe(np.array(verts, dtype=np.float32), edges)
+    return np.array(verts, dtype=np.float32), edges
