@@ -11,6 +11,9 @@ from visualize import visualize_wireframe_open3d      # Function to display a wi
 from test import rms_distance_exact, graph_edit_distance  # Evaluation metrics
 from models.bwformer import BWFormer                 # Transformer-based wireframe model
 
+import os
+os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
+
 
 from torch.optim.lr_scheduler import StepLR, ReduceLROnPlateau
 
@@ -37,21 +40,30 @@ def compute_angle_preservation_loss(edges):
     angle_diff = torch.acos(torch.clamp(cos_angle, -1.0, 1.0))
     # Penalize large angle changes (encourage smoothness)
     return angle_diff.mean()
+"""
+def enhanced_wireframe_loss(
+    pred_edges: torch.Tensor,    # [E_pred, 2, 3]
+    gt_edges:   torch.Tensor,    # [E_gt,   2, 3]
+    pc:         torch.Tensor,    # [N_points, 3]
+    p_conf:     torch.Tensor,    # [E_pred]
+    p_quad:     torch.Tensor,    # [E_pred, 4] (if you use it)
+    lambda_end: float = 0.1
+) -> torch.Tensor:
+    # 1) original wireframe matching loss
+    loss_wf = wireframe_loss(pred_edges, gt_edges, p_conf, p_quad)
 
-def enhanced_wireframe_loss(pred_edges, gt_edges, p_conf, p_quad):
-    # Original loss
-    base_loss = wireframe_loss(pred_edges, gt_edges, p_conf, p_quad) 
-    
-    # Add edge length regularization
-    pred_lengths = torch.norm(pred_edges[:,0] - pred_edges[:,1], dim=1)
-    gt_lengths = torch.norm(gt_edges[:,0] - gt_edges[:,1], dim=1)
-    length_loss = F.mse_loss(pred_lengths.mean(), gt_lengths.mean())
-    
-    # Add angle preservation term (for consecutive edges)
-    angle_loss = compute_angle_preservation_loss(pred_edges) 
-    
-    return base_loss + 0.1*length_loss + 0.05*angle_loss
+    # 2) endpoint‐to‐PC penalty
+    #    flatten all 2*E_pred endpoints into a (2E_pred,3) tensor
+    pred_pts = pred_edges.view(-1, 3)               # → [2*E_pred, 3]
+    #    full distance matrix to every cloud point
+    dists    = torch.cdist(pred_pts, pc)            # → [2E_pred, N_points]
+    #    pick the nearest‐neighbor for each endpoint
+    min_dists = dists.min(dim=1).values             # → [2*E_pred]
+    L_end     = min_dists.mean()                    # scalar
 
+    # 3) combine
+    return loss_wf + lambda_end * L_end
+"""
 
 
 def extract_vertices_and_edges(edge_tensor):
@@ -130,9 +142,8 @@ class WireframeDataset(Dataset):
         pc, gt_edges = normalize_by_gt(pc, gt_edges)
 
         if self.transform:
-            pc, gt_edges = self.transform(pc, gt_edges)
-
-        return pc, gt_edges
+            pc, gt_edges, pred_corners, pred_edges = self.transform(pc, gt_edges)
+        return pc, gt_edges, pred_corners, pred_edges
 
 
 # ─── Part 5: Training Loop ──────────────────────────────────────────────────
@@ -177,10 +188,23 @@ def main():
 
     # Select device: GPU if available, else CPU
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    pc_batch, gt_batch, pred_corners_batch, pred_edges_batch = next(iter(loader))
+    # remove batch dim → [E_gt, 2, 3]
+    E_pred = gt_batch[0].shape[0]
+
 
 
     # Initialize the model and move it to the chosen device
-    model = BWFormer().to(device)
+    model = BWFormer(
+    E_pred=100,
+    d_model=256,
+    nhead=4,
+    num_layers=4
+    ).to(device)
+
+    num_params = sum(p.numel() for p in model.parameters())
+    print(f"Model has {num_params} parameters")
+
 
     # Set up the optimizer
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
@@ -195,29 +219,43 @@ def main():
 
     # Variables to track loss improvements
     first_epoch_loss = None
-    max_epochs = 16
+    max_epochs = 20
 
     # Training loop
+    
     for epoch in range(1, max_epochs + 1):
-        # If using CUDA, synchronize to get accurate timing
         if device.type == "cuda":
             torch.cuda.synchronize()
         start_time = time.time()
 
         total_loss = 0.0
-        # Iterate over batches
-        for pc_batch, gt_batch in loader:
-            # Move data to device
-            pc = pc_batch.to(device)
-            gt_edges = gt_batch[0].to(device)
+        for batch in loader:
+            # Properly unpack the batch (assuming your dataset returns pc and gt_edges)
+            pc_batch, gt_edges_batch = batch[0], batch[1]  # Only take first two elements
+            
+            # Move data to device and handle batch dimension
+            pc = pc_batch[0].to(device)  # [N_points, 3]
+            gt_edges = gt_edges_batch[0].to(device)  # [E_gt, 2, 3]
 
-            # Forward pass: predict edges, confidences, and quadrant logits
-            pred_edges, p_conf, p_quad = model(pc)
+            # Forward pass - model now only returns pred_edges and p_conf
+            pred_edges, p_conf = model(pc)  # Remove p_quad from model output
 
-            # Squeeze batch dimension from confidences
-            p_conf = p_conf.squeeze(0)
-            # Compute wireframe loss
-            loss = enhanced_wireframe_loss(pred_edges, gt_edges, p_conf, p_quad)
+            # Compute loss - using the simplified version without p_quad
+            loss, loss_components = wireframe_loss(
+                pred_edges,          # [E_pred, 2, 3]
+                gt_edges,            # [E_gt, 2, 3]
+                p_conf.squeeze(),    # [E_pred]
+                alpha=1.0,
+                beta=1.0,
+                gamma=1.0,
+                λ_mid=1e-4,
+                λ_comp=1e-4,
+                λ_con=1.0,
+                λ_sim=1.0,
+                λ_chamf=0.5,
+                num_samples=20,
+                temp=0.1
+            )
 
             # Backpropagation
             optimizer.zero_grad()
@@ -261,6 +299,8 @@ def main():
             "peak_mem_mb": peak_mem
         })
 
+
+
     # After training, compute productivity improvement
     print(f"First one is {first_epoch_loss:.8f}")
     print(f"Last one is {avg_loss:.8f}")
@@ -273,7 +313,11 @@ def main():
     pred_np = pred_edges.detach().cpu().numpy()   # [E_pred, 2, 3]
     gt_np   = gt_edges.detach().cpu().numpy()     # [E_gt,   2, 3]
 
-    visualize_wireframe_open3d(pred_edges, gt_edges)
+    with torch.no_grad():
+        pred_edges, _ = model(pc)  # Get predictions without confidence
+        visualize_wireframe_open3d(pred_edges, gt_edges)
+
+    #visualize_wireframe_open3d(pred_edges, gt_edges)
 
     # Extract vertices and edge indices
     pd_vertices, pd_edges = extract_vertices_and_edges(pred_np)

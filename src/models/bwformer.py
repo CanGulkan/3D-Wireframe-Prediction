@@ -1,47 +1,60 @@
-
-import torch.nn as nn  
+import torch.nn as nn
 import torch
 
+import os
+os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
+
+
 class BWFormer(nn.Module):
-    def __init__(self, E_pred=100, d_model=256, nhead=4, num_layers=4):
+    def __init__(self, E_pred=50, d_model=128, nhead=4, num_layers=2):  # Reduced sizes
         super().__init__()
         self.E_pred = E_pred
 
-        # Point encoder
+        # More efficient encoder
         self.encoder = nn.Sequential(
-            nn.Linear(3, d_model),
+            nn.Linear(3, d_model//2),
             nn.ReLU(),
-            nn.Linear(d_model, d_model)
+            nn.Linear(d_model//2, d_model)
         )
 
-        # Positional encoding (optional)
-        self.pos_embed = nn.Parameter(torch.randn(1, 1024, d_model))
-
-        # Transformer encoder
+        # Transformer with batch_first and reduced layers
         self.transformer = nn.TransformerEncoder(
-            nn.TransformerEncoderLayer(d_model=d_model, nhead=nhead),
+            nn.TransformerEncoderLayer(
+                d_model=d_model,
+                nhead=nhead,
+                batch_first=True,
+                dim_feedforward=d_model*2  # Reduced from typical 4x
+            ),
             num_layers=num_layers
         )
 
-        # Global token or pooled feature
-        self.global_token = nn.Parameter(torch.randn(1, d_model))
-
-        # Heads
-        self.edge_head = nn.Linear(d_model, E_pred * 2 * 3)
-        self.conf_head = nn.Linear(d_model, E_pred)
-        self.quad_head = nn.Linear(d_model, E_pred * 4)
+        # Heads with reduced capacity
+        self.edge_head = nn.Sequential(
+            nn.Linear(d_model, d_model//2),
+            nn.ReLU(),
+            nn.Linear(d_model//2, E_pred * 2 * 3)
+        )
+        
+        self.conf_head = nn.Sequential(
+            nn.Linear(d_model, E_pred),
+            nn.Sigmoid()
+        )
 
     def forward(self, pc):
-        x = self.encoder(pc)                    # [N, d_model]
-        x = x.unsqueeze(1)                      # [N, 1, d_model]
-        x = x + self.pos_embed[:, :x.size(0)]   # [N, 1, d_model]
-
-        x = x.squeeze(1).permute(1, 0, 2)       # [seq_len, batch, d_model]
-        tf_out = self.transformer(x)            # [seq_len, batch, d_model]
-        global_feat = tf_out.mean(dim=0)        # [batch, d_model]
-
-        edges = self.edge_head(global_feat).view(self.E_pred, 2, 3)
-        conf = self.conf_head(global_feat)
-        quad = self.quad_head(global_feat).view(self.E_pred, 4)
-
-        return edges, conf, quad
+        # Input: [N_points, 3]
+        x = self.encoder(pc)  # [N, d_model]
+        
+        # Transformer expects [batch, seq, features]
+        x = x.unsqueeze(0)  # [1, N, d_model]
+        
+        # Process in chunks if needed
+        x = self.transformer(x)
+        
+        # Pool
+        global_feat = x.mean(dim=1)  # [1, d_model]
+        
+        # Predictions
+        edges = torch.tanh(self.edge_head(global_feat)).view(-1, 2, 3)
+        conf = self.conf_head(global_feat).squeeze(0)
+        
+        return edges[:self.E_pred], conf[:self.E_pred]  # Ensure correct size

@@ -1,4 +1,5 @@
 import numpy as np
+import os
 
 
 
@@ -50,9 +51,7 @@ def normalize_wireframe(vertices: np.ndarray, lines=None):
     return norm_vertices, lines
 
 def load_xyz(path: str) -> np.ndarray:
-    """
-    Load XYZ point cloud (first 3 columns).
-    """
+    assert os.path.exists(path), f"XYZ file not found: {path}"
     data = np.loadtxt(path)
     return data[:, :3]
 
